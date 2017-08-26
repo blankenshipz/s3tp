@@ -2,7 +2,6 @@
 // Serves the whole filesystem visible to the user, and has a hard-coded username and password,
 // so not for real use!
 package main
-
 import (
 	"flag"
 	"fmt"
@@ -13,6 +12,13 @@ import (
 	"os"
 
 	"github.com/pkg/sftp"
+
+  /*
+    The SSH library is here:
+      https://github.com/golang/crypto/tree/master/ssh
+
+    Likely a ConnMetaData will be needed that holds AWS_SECRET_KEY and AWS_ACCESS_KEY_ID
+  */
 	"golang.org/x/crypto/ssh"
 )
 
