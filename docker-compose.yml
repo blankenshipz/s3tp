@@ -9,6 +9,7 @@ services:
     volumes:
       - .:/go/src/app
 
+  # TODO: Seperate s3tp-lib from s3tp-bin
   bin:
     <<: *default
     command: /bin/sh -c "cd ./bin && go run main.go"
