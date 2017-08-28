@@ -1,8 +1,7 @@
 .*.swo
 .*.swp
-
+.secrets
 server_standalone/server_standalone
-
 bin/id_rsa
 bin/id_rsa.pub
 examples/*/id_rsa

@@ -8,6 +8,7 @@ services:
     command: go test
     volumes:
       - .:/go/src/app
+    env_file: .secrets
 
   # TODO: Seperate s3tp-lib from s3tp-bin
   bin:

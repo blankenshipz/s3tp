@@ -119,7 +119,7 @@ func main() {
 			}
 		}(requests)
 
-		root := sftp.InMemHandler()
+		root := sftp.S3Handler()
 		server := sftp.NewRequestServer(channel, root)
 		if err := server.Serve(); err == io.EOF {
 			server.Close()
