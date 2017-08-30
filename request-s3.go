@@ -1,4 +1,4 @@
-package sftp
+package main
 
 // This serves as an example of how to implement the request server handler as
 // well as a dummy backend for testing. It implements an in-memory backend that
@@ -11,12 +11,14 @@ import (
   "os"
   "sort"
   "sync"
+  "syscall"
   "time"
 
   "github.com/aws/aws-sdk-go/aws"
   "github.com/aws/aws-sdk-go/aws/credentials"
   "github.com/aws/aws-sdk-go/aws/session"
   "github.com/aws/aws-sdk-go/service/s3"
+  "github.com/pkg/sftp"
 )
 
 type s3listerat []os.FileInfo
@@ -81,12 +83,12 @@ func (f s3listerat) ListAt(ls []os.FileInfo, offset int64) (int, error) {
   return n, nil
 }
 
-func S3Handler() Handlers {
+func S3Handler() sftp.Handlers {
   foot := &foot{}
-  return Handlers{foot, foot, foot, foot}
+  return sftp.Handlers{foot, foot, foot, foot}
 }
 
-func (fs *foot) Filelist(r Request) (ListerAt, error) {
+func (fs *foot) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
   switch r.Method {
   case "List":
     ordered_names := []string{}
@@ -129,16 +131,20 @@ func newS3File(name string, isdir bool, bucket string) *s3File {
   }
 }
 
-func (fs *foot) Fileread(r Request) (io.ReaderAt, error) {
+func (fs *foot) Fileread(r *sftp.Request) (io.ReaderAt, error) {
   return nil, errors.New("foobar")
 }
 
-func (fs *foot) Filecmd(r Request) error {
+func (fs *foot) Filecmd(r *sftp.Request) error {
   return errors.New("foobar")
 }
 
-func (fs *foot) Filewrite(r Request) (io.WriterAt, error) {
+func (fs *foot) Filewrite(r *sftp.Request) (io.WriterAt, error) {
   return nil, errors.New("foobar")
+}
+
+func fakeFileInfoSys() interface{} {
+  return &syscall.Stat_t{Uid: 65534, Gid: 65534}
 }
 
 // Have s3File fulfill os.FileInfo interface

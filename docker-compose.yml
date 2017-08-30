@@ -1,19 +1,13 @@
 version: '3.0'
 
 services:
-  lib: &default
+  bin:
     build:
       context: .
       dockerfile: Dockerfile
-    command: go test
+    command: /bin/sh -c "go run *.go"
+    ports:
+      - "22:22"
     volumes:
       - .:/go/src/app
     env_file: .secrets
-
-  # TODO: Seperate s3tp-lib from s3tp-bin
-  bin:
-    <<: *default
-    command: /bin/sh -c "cd ./bin && go run main.go"
-    ports:
-      - "22:22"
-      - "2022:2022"
