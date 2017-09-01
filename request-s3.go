@@ -24,7 +24,7 @@ import (
 type s3listerat []os.FileInfo
 
 // In memory file-system-y thing that the Hanlders live on
-type foot struct {
+type s3fs struct {
   *s3File
 }
 
@@ -45,27 +45,35 @@ func s3Client() (*s3.S3) {
 
   * If possible cache the list of buckets and their regions between requests
 */
-func (fs *foot) files() (map[string]*s3File) {
+func (fs *s3fs) files_for_path(p string) (map[string]*s3File) {
   files := make(map[string]*s3File)
   client := s3Client()
-  bucket_results, _ := client.ListBuckets(&s3.ListBucketsInput{})
 
-  for _, bucket := range bucket_results.Buckets {
-    bucket_objects_query := &s3.ListObjectsV2Input{
-      Bucket:  aws.String(*bucket.Name),
-      MaxKeys: aws.Int64(1000),
-    }
+  if p == "/" {
+    bucket_results, _ := client.ListBuckets(&s3.ListBucketsInput{})
 
-    result, err := client.ListObjectsV2(bucket_objects_query)
-
-    if err != nil {
-      log.Println("#ListObjectsv2Input failed on bucket:", err)
-    }
-
-    for _, f  := range result.Contents {
-      files[*f.Key] = &s3File{name: *f.Key, bucket: *bucket.Name}
+    for _, bucket := range bucket_results.Buckets {
+      log.Println("bucket listing only:", *bucket.Name)
+      files[*bucket.Name] = &s3File{name: *bucket.Name, isdir: true}
     }
   }
+
+  // for _, bucket := range bucket_results.Buckets {
+  //   bucket_objects_query := &s3.ListObjectsV2Input{
+  //     Bucket:  aws.String(*bucket.Name),
+  //     MaxKeys: aws.Int64(1000),
+  //   }
+
+  //   result, err := client.ListObjectsV2(bucket_objects_query)
+
+  //   if err != nil {
+  //     log.Println("#ListObjectsv2Input failed on bucket:", err)
+  //   }
+
+  //   for _, f  := range result.Contents {
+  //     files[*f.Key] = &s3File{name: *f.Key, bucket: *bucket.Name}
+  //   }
+  // }
 
   return files
 }
@@ -84,15 +92,15 @@ func (f s3listerat) ListAt(ls []os.FileInfo, offset int64) (int, error) {
 }
 
 func S3Handler() sftp.Handlers {
-  foot := &foot{}
-  return sftp.Handlers{foot, foot, foot, foot}
+  s3fs := &s3fs{}
+  return sftp.Handlers{s3fs, s3fs, s3fs, s3fs}
 }
 
-func (fs *foot) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
+func (fs *s3fs) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
   switch r.Method {
   case "List":
     ordered_names := []string{}
-    files := fs.files()
+    files := fs.files_for_path(r.Filepath)
 
     for fn, _ := range files { ordered_names = append(ordered_names, fn) }
 
@@ -121,6 +129,13 @@ type s3File struct {
   bucket      string
 }
 
+func (fs *s3fs) fetch(path string) (*s3File, error) {
+  if path == "/" {
+    return nil, nil
+  }
+  return nil, os.ErrNotExist
+}
+
 // factory to make sure modtime is set
 func newS3File(name string, isdir bool, bucket string) *s3File {
   return &s3File{
@@ -131,15 +146,15 @@ func newS3File(name string, isdir bool, bucket string) *s3File {
   }
 }
 
-func (fs *foot) Fileread(r *sftp.Request) (io.ReaderAt, error) {
+func (fs *s3fs) Fileread(r *sftp.Request) (io.ReaderAt, error) {
   return nil, errors.New("foobar")
 }
 
-func (fs *foot) Filecmd(r *sftp.Request) error {
+func (fs *s3fs) Filecmd(r *sftp.Request) error {
   return errors.New("foobar")
 }
 
-func (fs *foot) Filewrite(r *sftp.Request) (io.WriterAt, error) {
+func (fs *s3fs) Filewrite(r *sftp.Request) (io.WriterAt, error) {
   return nil, errors.New("foobar")
 }
 
@@ -148,9 +163,9 @@ func fakeFileInfoSys() interface{} {
 }
 
 // Have s3File fulfill os.FileInfo interface
-func (f *s3File) Name() string { return f.bucket + "/" + f.name }
+func (f *s3File) Name() string { return f.name }
 func (f *s3File) Size() int64  { return 100 }
 func (f *s3File) Mode() os.FileMode { return os.FileMode(0644) }
 func (f *s3File) ModTime() time.Time { return time.Now() }
-func (f *s3File) IsDir() bool        { return false }
+func (f *s3File) IsDir() bool        { return f.isdir }
 func (f *s3File) Sys() interface{} { return fakeFileInfoSys() }
