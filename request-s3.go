@@ -7,9 +7,10 @@ package main
 import (
   "errors"
   "io"
-  "log"
+  _"log"
   "os"
   "sort"
+  "strings"
   "sync"
   "syscall"
   "time"
@@ -22,6 +23,7 @@ import (
 )
 
 type s3listerat []os.FileInfo
+var delimiter = "/"
 
 // In memory file-system-y thing that the Hanlders live on
 type s3fs struct {
@@ -53,27 +55,41 @@ func (fs *s3fs) files_for_path(p string) (map[string]*s3File) {
     bucket_results, _ := client.ListBuckets(&s3.ListBucketsInput{})
 
     for _, bucket := range bucket_results.Buckets {
-      log.Println("bucket listing only:", *bucket.Name)
       files[*bucket.Name] = &s3File{name: *bucket.Name, isdir: true}
     }
+  } else {
+    list := strings.Split(p, delimiter)
+    bucket := strings.TrimSpace(list[1])
+    prefix := ""
+
+    if len(list) > 2 {
+      prefix = strings.Join(list[2:len(list)], delimiter)
+      prefix = prefix + "/"
+    }
+
+    input := &s3.ListObjectsV2Input{
+        Bucket:  aws.String(bucket),
+        MaxKeys: aws.Int64(1000),
+        Delimiter: &delimiter,
+        Prefix: &prefix,
+    }
+
+    result, _ := client.ListObjectsV2(input)
+
+    for _, f  := range result.Contents {
+      if *f.Key == prefix {
+        continue
+      }
+
+      name := strings.TrimPrefix(*f.Key, prefix)
+      files[*f.Key] = &s3File{name: name, bucket: bucket}
+    }
+
+    for _, f  := range result.CommonPrefixes {
+      name := strings.TrimPrefix(*f.Prefix, prefix)
+      files[*f.Prefix] = &s3File{name: name, bucket: bucket, isdir: true}
+    }
   }
-
-  // for _, bucket := range bucket_results.Buckets {
-  //   bucket_objects_query := &s3.ListObjectsV2Input{
-  //     Bucket:  aws.String(*bucket.Name),
-  //     MaxKeys: aws.Int64(1000),
-  //   }
-
-  //   result, err := client.ListObjectsV2(bucket_objects_query)
-
-  //   if err != nil {
-  //     log.Println("#ListObjectsv2Input failed on bucket:", err)
-  //   }
-
-  //   for _, f  := range result.Contents {
-  //     files[*f.Key] = &s3File{name: *f.Key, bucket: *bucket.Name}
-  //   }
-  // }
 
   return files
 }

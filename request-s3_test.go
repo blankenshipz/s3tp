@@ -15,13 +15,47 @@ import (
 func TestRequestReaddir(t *testing.T) {
   p := clientRequestServerPair(t)
   defer p.Close()
-  _, err := p.cli.ReadDir("/")
+
+  // list buckets
+  files, err := p.cli.ReadDir("/")
   assert.Nil(t, err)
-  // names := []string{di[18].Name(), di[81].Name()}
-  // assert.Equal(t, []string{"foo_18", "foo_81"}, names)
+  names := []string{files[1].Name()}
+  assert.Equal(t, []string{"s3tp-test"}, names)
+
+  // list files one level deep in the bucket
+  files, err = p.cli.ReadDir("/s3tp-test")
+  assert.Nil(t, err)
+  names = []string{files[0].Name(), files[1].Name()}
+  assert.Equal(t, []string{"dir-1-deep", "test-file.txt"}, names)
+
+  // list files two levels deep in the bucket
+  files, err = p.cli.ReadDir("/s3tp-test/dir-1-deep")
+  assert.Nil(t, err)
+  names = []string{files[0].Name(), files[1].Name()}
+  assert.Equal(t, []string{"dir-2-deep", "lux.png"}, names)
+
+  // // list files three levels deep in the bucket
+  // files, err = p.cli.ReadDir("/s3tp-test/dir-1-deep/dir-2-deep")
+  // assert.Nil(t, err)
+  // names = []string{files[0].Name()}
+  // assert.Equal(t, []string{"lux.png", names)
 }
 
+// func TestRequestMkdir(t *testing.T) {
+//   p := clientRequestServerPair(t)
+//   defer p.Close()
+//   err := p.cli.Mkdir("/foo")
+//   assert.Nil(t, err)
+//   r := p.testHandler()
+//   f, err := r.fetch("/foo")
+//   assert.Nil(t, err)
+//   assert.True(t, f.isdir)
+// }
+
 // setup
+func initialize() {
+}
+
 var _ = fmt.Print
 
 const sock = "/tmp/rstest.sock"
@@ -140,18 +174,6 @@ func clientRequestServerPair(t *testing.T) *csPair {
 //   err = fh.Close()
 //   assert.Nil(t, err)
 // }
-
-// func TestRequestMkdir(t *testing.T) {
-//   p := clientRequestServerPair(t)
-//   defer p.Close()
-//   err := p.cli.Mkdir("/foo")
-//   assert.Nil(t, err)
-//   r := p.testHandler()
-//   f, err := r.fetch("/foo")
-//   assert.Nil(t, err)
-//   assert.True(t, f.isdir)
-// }
-
 // func TestRequestRemove(t *testing.T) {
 //   p := clientRequestServerPair(t)
 //   defer p.Close()
