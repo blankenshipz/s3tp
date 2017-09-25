@@ -5,9 +5,10 @@ package main
 // works as a very simple filesystem with simple flat key-value lookup system.
 
 import (
+  "bytes"
   "errors"
   "io"
-  _"log"
+  "log"
   "os"
   "sort"
   "strings"
@@ -27,7 +28,20 @@ var delimiter = "/"
 
 // In memory file-system-y thing that the Hanlders live on
 type s3fs struct {
-  *s3File
+  *s3.S3
+}
+
+// Implements os.FileInfo, Reader and Writer interfaces.
+// These are the 3 interfaces necessary for the Handlers.
+type s3File struct {
+  name        string
+  modtime     time.Time
+  symlink     string
+  isdir       bool
+  content     []byte
+  contentLock sync.RWMutex
+  bucket      string
+  key         string
 }
 
 func s3Client() (*s3.S3) {
@@ -38,32 +52,52 @@ func s3Client() (*s3.S3) {
   return client
 }
 
-/*
-  * We should have the request pathname, if possible use that to pick a single bucket
-  * Otherwise get the list of all buckets
-  * Poll for the bucket(s) region and create a client for each region that has buckets
-  * get the list of files in the bucket(s)
-  * create virtual set of files and "IsDir" for the files from the ObjectList
+func bucket_parts_from_filepath(p string) (bucket, path string) {
+    list := strings.Split(p, delimiter)
+    bucket = strings.TrimSpace(list[1])
 
-  * If possible cache the list of buckets and their regions between requests
-*/
+    path = ""
+
+    if len(list) > 2 {
+      path = strings.Join(list[2:len(list)], delimiter)
+    }
+
+    return bucket, path
+}
+
+func (fs *s3fs) file_for_path(p string) (*s3File, error) {
+  bucket, key := bucket_parts_from_filepath(p)
+
+  input := &s3.HeadObjectInput{
+      Bucket: aws.String(bucket),
+      Key:    aws.String(key),
+  }
+
+  _, err := fs.HeadObject(input)
+
+  if err != nil {
+    if len(fs.files_for_path(p)) > 0 {
+      log.Println("path in #file_for_path: ", p)
+      return &s3File{name: p, isdir: true}, nil
+    }
+    return nil, err
+  }
+  return &s3File{name: p, isdir: false}, nil
+}
+
 func (fs *s3fs) files_for_path(p string) (map[string]*s3File) {
   files := make(map[string]*s3File)
-  client := s3Client()
 
   if p == "/" {
-    bucket_results, _ := client.ListBuckets(&s3.ListBucketsInput{})
+    bucket_results, _ := fs.ListBuckets(&s3.ListBucketsInput{})
 
     for _, bucket := range bucket_results.Buckets {
       files[*bucket.Name] = &s3File{name: *bucket.Name, isdir: true}
     }
   } else {
-    list := strings.Split(p, delimiter)
-    bucket := strings.TrimSpace(list[1])
-    prefix := ""
+    bucket, prefix := bucket_parts_from_filepath(p)
 
-    if len(list) > 2 {
-      prefix = strings.Join(list[2:len(list)], delimiter)
+    if prefix != "" {
       prefix = prefix + "/"
     }
 
@@ -74,7 +108,7 @@ func (fs *s3fs) files_for_path(p string) (map[string]*s3File) {
         Prefix: &prefix,
     }
 
-    result, _ := client.ListObjectsV2(input)
+    result, _ := fs.ListObjectsV2(input)
 
     for _, f  := range result.Contents {
       if *f.Key == prefix {
@@ -86,8 +120,9 @@ func (fs *s3fs) files_for_path(p string) (map[string]*s3File) {
     }
 
     for _, f  := range result.CommonPrefixes {
-      name := strings.TrimPrefix(*f.Prefix, prefix)
-      files[*f.Prefix] = &s3File{name: name, bucket: bucket, isdir: true}
+      path := strings.TrimPrefix(*f.Prefix, prefix)
+      dir := strings.TrimSuffix(path, delimiter)
+      files[*f.Prefix] = &s3File{name: dir, bucket: bucket, isdir: true}
     }
   }
 
@@ -108,13 +143,14 @@ func (f s3listerat) ListAt(ls []os.FileInfo, offset int64) (int, error) {
 }
 
 func S3Handler() sftp.Handlers {
-  s3fs := &s3fs{}
+  s3fs := &s3fs{S3: s3Client()}
   return sftp.Handlers{s3fs, s3fs, s3fs, s3fs}
 }
 
 func (fs *s3fs) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
   switch r.Method {
   case "List":
+    log.Println("Doing a list: ", r.Filepath)
     ordered_names := []string{}
     files := fs.files_for_path(r.Filepath)
 
@@ -129,20 +165,15 @@ func (fs *s3fs) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
     }
 
     return s3listerat(list), nil
+  case "Stat":
+    file, err := fs.file_for_path(r.Filepath)
+
+    if err != nil {
+      return nil, err
+    }
+    return s3listerat([]os.FileInfo{file}), nil
   }
   return nil, nil
-}
-
-// Implements os.FileInfo, Reader and Writer interfaces.
-// These are the 3 interfaces necessary for the Handlers.
-type s3File struct {
-  name        string
-  modtime     time.Time
-  symlink     string
-  isdir       bool
-  content     []byte
-  contentLock sync.RWMutex
-  bucket      string
 }
 
 func (fs *s3fs) fetch(path string) (*s3File, error) {
@@ -152,18 +183,20 @@ func (fs *s3fs) fetch(path string) (*s3File, error) {
   return nil, os.ErrNotExist
 }
 
-// factory to make sure modtime is set
-func newS3File(name string, isdir bool, bucket string) *s3File {
-  return &s3File{
-    name:    name,
-    modtime: time.Now(),
-    isdir:   isdir,
-    bucket:  bucket,
-  }
-}
-
 func (fs *s3fs) Fileread(r *sftp.Request) (io.ReaderAt, error) {
-  return nil, errors.New("foobar")
+  file, err := fs.fetch(r.Filepath)
+
+  if err != nil {
+    return nil, err
+  }
+  if file.symlink != "" {
+    file, err = fs.fetch(file.symlink)
+    if err != nil {
+      return nil, err
+    }
+  }
+
+  return file.ReaderAt()
 }
 
 func (fs *s3fs) Filecmd(r *sftp.Request) error {
@@ -174,6 +207,13 @@ func (fs *s3fs) Filewrite(r *sftp.Request) (io.WriterAt, error) {
   return nil, errors.New("foobar")
 }
 
+func (f *s3File) ReaderAt() (io.ReaderAt, error) {
+  if f.isdir {
+    return nil, os.ErrInvalid
+  }
+  return bytes.NewReader(f.content), nil
+}
+
 func fakeFileInfoSys() interface{} {
   return &syscall.Stat_t{Uid: 65534, Gid: 65534}
 }
@@ -181,7 +221,20 @@ func fakeFileInfoSys() interface{} {
 // Have s3File fulfill os.FileInfo interface
 func (f *s3File) Name() string { return f.name }
 func (f *s3File) Size() int64  { return 100 }
-func (f *s3File) Mode() os.FileMode { return os.FileMode(0644) }
+
+func (f *s3File) Mode() os.FileMode {
+  ret := os.FileMode(0644)
+
+  if f.isdir {
+    ret = os.FileMode(0755) | os.ModeDir
+  }
+  if f.symlink != "" {
+    ret = os.FileMode(0777) | os.ModeSymlink
+  }
+
+  return ret
+}
+
 func (f *s3File) ModTime() time.Time { return time.Now() }
 func (f *s3File) IsDir() bool        { return f.isdir }
 func (f *s3File) Sys() interface{} { return fakeFileInfoSys() }
