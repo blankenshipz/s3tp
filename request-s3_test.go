@@ -2,7 +2,7 @@ package main
 
 import (
   "fmt"
-  _ "io"
+  "io"
   "net"
   "os"
   "testing"
@@ -26,7 +26,7 @@ func TestRequestReaddir(t *testing.T) {
   files, err = p.cli.ReadDir("/s3tp-test")
   assert.Nil(t, err)
   names = []string{files[0].Name(), files[1].Name()}
-  assert.Equal(t, []string{"dir-1-deep", "test-file.txt"}, names)
+  assert.Equal(t, []string{"dir-1-deep", "hello"}, names)
 
   // list files two levels deep in the bucket
   files, err = p.cli.ReadDir("/s3tp-test/dir-1-deep")
@@ -49,9 +49,27 @@ func TestRequestFstat(t *testing.T) {
   fi, err := fp.Stat()
   assert.Nil(t, err)
   assert.Equal(t, fi.Name(), "lux.png")
-  // assert.Equal(t, fi.Size(), int64(5))
-  // assert.Equal(t, fi.Mode(), os.FileMode(0644))
-  // assert.NoError(t, testOsSys(fi.Sys()))
+  assert.Equal(t, fi.Mode(), os.FileMode(0644))
+}
+
+func TestRequestRead(t *testing.T) {
+  p := clientRequestServerPair(t)
+  defer p.Close()
+
+  // get the file
+  rf, err := p.cli.Open("/s3tp-test/hello")
+  assert.Nil(t, err)
+  defer rf.Close()
+
+  // read the contents (from in memory for now)
+  contents := make([]byte, 5)
+  n, err := rf.Read(contents)
+  if err != nil && err != io.EOF {
+    t.Fatalf("err: %v", err)
+  }
+
+  assert.Equal(t, 5, n)
+  assert.Equal(t, "hello", string(contents[0:5]))
 }
 
 // func TestRequestMkdir(t *testing.T) {
@@ -151,22 +169,6 @@ func clientRequestServerPair(t *testing.T) *csPair {
 //   assert.Equal(t, f.Name(), "foo")
 // }
 
-// func TestRequestRead(t *testing.T) {
-//   p := clientRequestServerPair(t)
-//   defer p.Close()
-//   _, err := putTestFile(p.cli, "/foo", "hello")
-//   assert.Nil(t, err)
-//   rf, err := p.cli.Open("/foo")
-//   assert.Nil(t, err)
-//   defer rf.Close()
-//   contents := make([]byte, 5)
-//   n, err := rf.Read(contents)
-//   if err != nil && err != io.EOF {
-//     t.Fatalf("err: %v", err)
-//   }
-//   assert.Equal(t, 5, n)
-//   assert.Equal(t, "hello", string(contents[0:5]))
-// }
 
 // func TestRequestReadFail(t *testing.T) {
 //   p := clientRequestServerPair(t)

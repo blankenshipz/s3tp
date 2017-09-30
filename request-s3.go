@@ -1,14 +1,10 @@
 package main
 
-// This serves as an example of how to implement the request server handler as
-// well as a dummy backend for testing. It implements an in-memory backend that
-// works as a very simple filesystem with simple flat key-value lookup system.
-
 import (
   "bytes"
   "errors"
   "io"
-  "log"
+  _ "log"
   "os"
   "sort"
   "strings"
@@ -21,6 +17,7 @@ import (
   "github.com/aws/aws-sdk-go/aws/session"
   "github.com/aws/aws-sdk-go/service/s3"
   "github.com/pkg/sftp"
+  _"github.com/rlmcpherson/s3gof3r"
 )
 
 type s3listerat []os.FileInfo
@@ -77,12 +74,11 @@ func (fs *s3fs) file_for_path(p string) (*s3File, error) {
 
   if err != nil {
     if len(fs.files_for_path(p)) > 0 {
-      log.Println("path in #file_for_path: ", p)
       return &s3File{name: p, isdir: true}, nil
     }
     return nil, err
   }
-  return &s3File{name: p, isdir: false}, nil
+  return &s3File{name: p, isdir: false, key: p}, nil
 }
 
 func (fs *s3fs) files_for_path(p string) (map[string]*s3File) {
@@ -116,7 +112,7 @@ func (fs *s3fs) files_for_path(p string) (map[string]*s3File) {
       }
 
       name := strings.TrimPrefix(*f.Key, prefix)
-      files[*f.Key] = &s3File{name: name, bucket: bucket}
+      files[*f.Key] = &s3File{name: name, bucket: bucket, key: *f.Key}
     }
 
     for _, f  := range result.CommonPrefixes {
@@ -150,7 +146,6 @@ func S3Handler() sftp.Handlers {
 func (fs *s3fs) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
   switch r.Method {
   case "List":
-    log.Println("Doing a list: ", r.Filepath)
     ordered_names := []string{}
     files := fs.files_for_path(r.Filepath)
 
@@ -176,11 +171,31 @@ func (fs *s3fs) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
   return nil, nil
 }
 
-func (fs *s3fs) fetch(path string) (*s3File, error) {
-  if path == "/" {
+func (fs *s3fs) fetch(filepath string) (*s3File, error) {
+  if filepath == "/" {
     return nil, nil
   }
-  return nil, os.ErrNotExist
+
+  // TODO could probably remove the overhead here
+  file, err := fs.file_for_path(filepath)
+  buffer := new(bytes.Buffer)
+
+  if err != nil {
+    return nil, err
+  }
+
+  input := &s3.GetObjectInput{
+      Bucket: aws.String(file.bucket),
+      Key:    aws.String(file.key),
+  }
+
+  result, err := fs.GetObject(input)
+
+  buffer.ReadFrom(result.Body)
+
+  file.content = buffer.Bytes()
+
+  return file, nil
 }
 
 func (fs *s3fs) Fileread(r *sftp.Request) (io.ReaderAt, error) {
@@ -207,10 +222,18 @@ func (fs *s3fs) Filewrite(r *sftp.Request) (io.WriterAt, error) {
   return nil, errors.New("foobar")
 }
 
+func (f *s3File) WriterAt() (io.WriterAt, error) {
+  if f.isdir {
+    return nil, os.ErrInvalid
+  }
+  return nil, nil
+}
+
 func (f *s3File) ReaderAt() (io.ReaderAt, error) {
   if f.isdir {
     return nil, os.ErrInvalid
   }
+
   return bytes.NewReader(f.content), nil
 }
 
