@@ -120,7 +120,7 @@ func clientRequestServerPair(t *testing.T) *csPair {
     ready <- true
     fd, err := l.Accept()
     assert.Nil(t, err)
-    handlers := S3Handler()
+    handlers := S3Handler(os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_KEY_ID"))
     server = sftp.NewRequestServer(fd, handlers)
     server.Serve()
   }()

@@ -10,6 +10,7 @@ import (
   "net"
   "os"
 
+  "github.com/aws/aws-sdk-go/service/s3"
   "github.com/pkg/sftp"
   "golang.org/x/crypto/ssh"
 )
@@ -37,11 +38,18 @@ func main() {
     PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
       // Should use constant-time compare (or better, salt+hash) in
       // a production setting.
-      fmt.Fprintf(debugStream, "Login: %s\n", c.User())
-      if c.User() == "testuser" && string(pass) == "tiger" {
-        return nil, nil
+      client := s3Client(c.User(), string(pass))
+      input := &s3.ListBucketsInput{}
+
+      _, err := client.ListBuckets(input)
+
+      if err != nil {
+        return nil, fmt.Errorf("Authentication rejected for %q", c.User())
       }
-      return nil, fmt.Errorf("password rejected for %q", c.User())
+
+      fmt.Fprintf(debugStream, "Login: %s\n", c.User())
+
+      return &ssh.Permissions{Extensions: map[string]string{"ACCESS_KEY_ID": c.User(), "SECRET_KEY_ID": string(pass)}}, nil
     },
   }
 
@@ -72,10 +80,16 @@ func main() {
 
   // Before use, a handshake must be performed on the incoming net.Conn.
   sconn, chans, reqs, err := ssh.NewServerConn(nConn, config)
+
   if err != nil {
     log.Fatal("failed to handshake", err)
   }
-  log.Println("login detected:", sconn.User())
+
+  access_key := sconn.Permissions.Extensions["ACCESS_KEY_ID"]
+  secret_key := sconn.Permissions.Extensions["SECRET_KEY_ID"]
+
+  log.Println("login detected:", access_key)
+
   fmt.Fprintf(debugStream, "SSH server established\n")
 
   // The incoming Request channel must be serviced.
@@ -117,7 +131,7 @@ func main() {
       }
     }(requests)
 
-    root := S3Handler()
+    root := S3Handler(access_key, secret_key)
     server := sftp.NewRequestServer(channel, root)
     if err := server.Serve(); err == io.EOF {
       server.Close()

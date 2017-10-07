@@ -41,8 +41,8 @@ type s3File struct {
   key         string
 }
 
-func s3Client() (*s3.S3) {
-  value := credentials.Value{ AccessKeyID: os.Getenv("AWS_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY") }
+func s3Client(access_key_id, secret_access_key string) (*s3.S3) {
+  value := credentials.Value{ AccessKeyID: access_key_id, SecretAccessKey: secret_access_key}
   creds := credentials.NewStaticCredentialsFromCreds(value)
   sess, _ := session.NewSession(&aws.Config{ Region: aws.String("us-east-1") })
   client := s3.New(sess, &aws.Config{Credentials: creds})
@@ -138,8 +138,8 @@ func (f s3listerat) ListAt(ls []os.FileInfo, offset int64) (int, error) {
   return n, nil
 }
 
-func S3Handler() sftp.Handlers {
-  s3fs := &s3fs{S3: s3Client()}
+func S3Handler(access_key, secret_key string) sftp.Handlers {
+  s3fs := &s3fs{S3: s3Client(access_key, secret_key)}
   return sftp.Handlers{s3fs, s3fs, s3fs, s3fs}
 }
 
