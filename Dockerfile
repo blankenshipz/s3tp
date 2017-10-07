@@ -5,7 +5,8 @@ WORKDIR /go/src/app
 
 COPY . /go/src/app
 
-RUN go-wrapper download && go-wrapper install
-RUN go get github.com/stretchr/testify/assert
+RUN \
+  go get -u github.com/golang/dep/cmd/dep && \
+  dep ensure
 
 CMD ["go", "test", "-v"]
