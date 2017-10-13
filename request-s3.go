@@ -3,63 +3,43 @@ package main
 import (
   "bytes"
   "errors"
-  "io"
-  _ "log"
   "os"
+  "io"
   "sort"
   "strings"
-  "sync"
-  "syscall"
-  "time"
+  _ "log"
 
   "github.com/aws/aws-sdk-go/aws"
-  "github.com/aws/aws-sdk-go/aws/credentials"
-  "github.com/aws/aws-sdk-go/aws/session"
   "github.com/aws/aws-sdk-go/service/s3"
   "github.com/pkg/sftp"
   _"github.com/rlmcpherson/s3gof3r"
 )
 
-type s3listerat []os.FileInfo
 var delimiter = "/"
 
-// In memory file-system-y thing that the Hanlders live on
+type s3listerat []os.FileInfo
+
+// Modeled after strings.Reader's ReadAt() implementation
+func (f s3listerat) ListAt(ls []os.FileInfo, offset int64) (int, error) {
+  var n int
+  if offset >= int64(len(f)) {
+    return 0, io.EOF
+  }
+  n = copy(ls, f[offset:])
+  if n < len(ls) {
+    return n, io.EOF
+  }
+  return n, nil
+}
+
+func S3Handler(access_key, secret_key string) sftp.Handlers {
+  s3fs := &s3fs{S3: s3Client(access_key, secret_key)}
+  return sftp.Handlers{s3fs, s3fs, s3fs, s3fs}
+}
+
+// file-system-y thing that the Hanlders live on
 type s3fs struct {
   *s3.S3
-}
-
-// Implements os.FileInfo, Reader and Writer interfaces.
-// These are the 3 interfaces necessary for the Handlers.
-type s3File struct {
-  name        string
-  modtime     time.Time
-  symlink     string
-  isdir       bool
-  content     []byte
-  contentLock sync.RWMutex
-  bucket      string
-  key         string
-}
-
-func s3Client(access_key_id, secret_access_key string) (*s3.S3) {
-  value := credentials.Value{ AccessKeyID: access_key_id, SecretAccessKey: secret_access_key}
-  creds := credentials.NewStaticCredentialsFromCreds(value)
-  sess, _ := session.NewSession(&aws.Config{ Region: aws.String("us-east-1") })
-  client := s3.New(sess, &aws.Config{Credentials: creds})
-  return client
-}
-
-func bucket_parts_from_filepath(p string) (bucket, path string) {
-    list := strings.Split(p, delimiter)
-    bucket = strings.TrimSpace(list[1])
-
-    path = ""
-
-    if len(list) > 2 {
-      path = strings.Join(list[2:len(list)], delimiter)
-    }
-
-    return bucket, path
 }
 
 func (fs *s3fs) file_for_path(p string) (*s3File, error) {
@@ -123,24 +103,6 @@ func (fs *s3fs) files_for_path(p string) (map[string]*s3File) {
   }
 
   return files
-}
-
-// Modeled after strings.Reader's ReadAt() implementation
-func (f s3listerat) ListAt(ls []os.FileInfo, offset int64) (int, error) {
-  var n int
-  if offset >= int64(len(f)) {
-    return 0, io.EOF
-  }
-  n = copy(ls, f[offset:])
-  if n < len(ls) {
-    return n, io.EOF
-  }
-  return n, nil
-}
-
-func S3Handler(access_key, secret_key string) sftp.Handlers {
-  s3fs := &s3fs{S3: s3Client(access_key, secret_key)}
-  return sftp.Handlers{s3fs, s3fs, s3fs, s3fs}
 }
 
 func (fs *s3fs) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
@@ -222,42 +184,16 @@ func (fs *s3fs) Filewrite(r *sftp.Request) (io.WriterAt, error) {
   return nil, errors.New("foobar")
 }
 
-func (f *s3File) WriterAt() (io.WriterAt, error) {
-  if f.isdir {
-    return nil, os.ErrInvalid
-  }
-  return nil, nil
+func bucket_parts_from_filepath(p string) (bucket, path string) {
+    list := strings.Split(p, delimiter)
+    bucket = strings.TrimSpace(list[1])
+
+    path = ""
+
+    if len(list) > 2 {
+      path = strings.Join(list[2:len(list)], delimiter)
+    }
+
+    return bucket, path
 }
 
-func (f *s3File) ReaderAt() (io.ReaderAt, error) {
-  if f.isdir {
-    return nil, os.ErrInvalid
-  }
-
-  return bytes.NewReader(f.content), nil
-}
-
-func fakeFileInfoSys() interface{} {
-  return &syscall.Stat_t{Uid: 65534, Gid: 65534}
-}
-
-// Have s3File fulfill os.FileInfo interface
-func (f *s3File) Name() string { return f.name }
-func (f *s3File) Size() int64  { return 100 }
-
-func (f *s3File) Mode() os.FileMode {
-  ret := os.FileMode(0644)
-
-  if f.isdir {
-    ret = os.FileMode(0755) | os.ModeDir
-  }
-  if f.symlink != "" {
-    ret = os.FileMode(0777) | os.ModeSymlink
-  }
-
-  return ret
-}
-
-func (f *s3File) ModTime() time.Time { return time.Now() }
-func (f *s3File) IsDir() bool        { return f.isdir }
-func (f *s3File) Sys() interface{} { return fakeFileInfoSys() }
