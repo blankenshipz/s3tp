@@ -7,7 +7,6 @@ import (
   "io"
   "sort"
   "strings"
-  _ "log"
 
   "github.com/aws/aws-sdk-go/aws"
   "github.com/aws/aws-sdk-go/service/s3"
@@ -33,13 +32,15 @@ func (f s3listerat) ListAt(ls []os.FileInfo, offset int64) (int, error) {
 }
 
 func S3Handler(access_key, secret_key string) sftp.Handlers {
-  s3fs := &s3fs{S3: s3Client(access_key, secret_key)}
+  s3fs := &s3fs{S3: s3Client(access_key, secret_key), accessKey: access_key, secretKey: secret_key}
   return sftp.Handlers{s3fs, s3fs, s3fs, s3fs}
 }
 
 // file-system-y thing that the Hanlders live on
 type s3fs struct {
   *s3.S3
+  accessKey string
+  secretKey string
 }
 
 func (fs *s3fs) file_for_path(p string) (*s3File, error) {
@@ -177,11 +178,18 @@ func (fs *s3fs) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 }
 
 func (fs *s3fs) Filecmd(r *sftp.Request) error {
+
   return errors.New("foobar")
 }
 
 func (fs *s3fs) Filewrite(r *sftp.Request) (io.WriterAt, error) {
-  return nil, errors.New("foobar")
+  bucket, key := bucket_parts_from_filepath(r.Filepath)
+
+  file := &s3File{name: r.Filepath, isdir: false, key: key, bucket: bucket}
+
+  file.OpenStreamingWriter(fs.accessKey, fs.secretKey)
+
+  return file.WriterAt()
 }
 
 func bucket_parts_from_filepath(p string) (bucket, path string) {

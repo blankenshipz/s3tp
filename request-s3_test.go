@@ -72,6 +72,19 @@ func TestRequestRead(t *testing.T) {
   assert.Equal(t, "hello", string(contents[0:5]))
 }
 
+func TestRequestWrite(t *testing.T) {
+  p := clientRequestServerPair(t)
+  defer p.Close()
+  n, err := putTestFile(p.cli, "s3tp-test/foo", "hello")
+  assert.Nil(t, err)
+  assert.Equal(t, 5, n)
+  r := p.testHandler()
+  f, err := r.fetch("/s3tp-test/foo")
+  assert.Nil(t, err)
+  assert.False(t, f.isdir)
+  assert.Equal(t, f.content, []byte("hello"))
+}
+
 // func TestRequestMkdir(t *testing.T) {
 //   p := clientRequestServerPair(t)
 //   defer p.Close()
@@ -136,26 +149,14 @@ func clientRequestServerPair(t *testing.T) *csPair {
 }
 
 // tests from example
-// func putTestFile(cli *Client, path, content string) (int, error) {
-//   w, err := cli.Create(path)
-//   if err == nil {
-//     defer w.Close()
-//     return w.Write([]byte(content))
-//   }
-//   return 0, err
-// }
-// func TestRequestWrite(t *testing.T) {
-//   p := clientRequestServerPair(t)
-//   defer p.Close()
-//   n, err := putTestFile(p.cli, "/foo", "hello")
-//   assert.Nil(t, err)
-//   assert.Equal(t, 5, n)
-//   r := p.testHandler()
-//   f, err := r.fetch("/foo")
-//   assert.Nil(t, err)
-//   assert.False(t, f.isdir)
-//   assert.Equal(t, f.content, []byte("hello"))
-// }
+func putTestFile(cli *sftp.Client, path, content string) (int, error) {
+  w, err := cli.Create(path)
+  if err == nil {
+    defer w.Close()
+    return w.Write([]byte(content))
+  }
+  return 0, err
+}
 
 // // needs fail check
 // func TestRequestFilename(t *testing.T) {
