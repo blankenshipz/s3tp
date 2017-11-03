@@ -1,10 +1,9 @@
 package main
 
 import (
-  "bytes"
   "errors"
-  "os"
   "io"
+  "os"
   "sort"
   "strings"
 
@@ -51,7 +50,7 @@ func (fs *s3fs) file_for_path(p string) (*s3File, error) {
       Key:    aws.String(key),
   }
 
-  _, err := fs.HeadObject(input)
+  output, err := fs.HeadObject(input)
 
   if err != nil {
     if len(fs.files_for_path(p)) > 0 {
@@ -59,7 +58,7 @@ func (fs *s3fs) file_for_path(p string) (*s3File, error) {
     }
     return nil, err
   }
-  return &s3File{name: p, isdir: false, key: p}, nil
+  return &s3File{name: p, isdir: false, key: key, size: *output.ContentLength, bucket: bucket}, nil
 }
 
 func (fs *s3fs) files_for_path(p string) (map[string]*s3File) {
@@ -134,47 +133,16 @@ func (fs *s3fs) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
   return nil, nil
 }
 
-func (fs *s3fs) fetch(filepath string) (*s3File, error) {
-  if filepath == "/" {
-    return nil, nil
-  }
-
-  // TODO could probably remove the overhead here
-  file, err := fs.file_for_path(filepath)
-  buffer := new(bytes.Buffer)
-
-  if err != nil {
-    return nil, err
-  }
-
-  input := &s3.GetObjectInput{
-      Bucket: aws.String(file.bucket),
-      Key:    aws.String(file.key),
-  }
-
-  result, err := fs.GetObject(input)
-
-  buffer.ReadFrom(result.Body)
-
-  file.content = buffer.Bytes()
-
-  return file, nil
-}
-
 func (fs *s3fs) Fileread(r *sftp.Request) (io.ReaderAt, error) {
-  file, err := fs.fetch(r.Filepath)
+  file, err := fs.file_for_path(r.Filepath)
 
   if err != nil {
     return nil, err
   }
-  if file.symlink != "" {
-    file, err = fs.fetch(file.symlink)
-    if err != nil {
-      return nil, err
-    }
-  }
 
-  return file.ReaderAt()
+  err = file.OpenStreamingReader(fs.accessKey, fs.secretKey)
+
+  return io.ReaderAt(file), err
 }
 
 func (fs *s3fs) Filecmd(r *sftp.Request) error {
