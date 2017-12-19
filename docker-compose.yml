@@ -8,6 +8,7 @@ services:
     command: "go test -v"
     ports:
       - "22:22"
+      - "8080:8080"
     # links:
     #   - nginx-proxy
     #   - fakes3
