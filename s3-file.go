@@ -49,7 +49,7 @@ type orderedS3Reader struct {
 
 type orderedS3Writer struct {
   nextOffset int64
-  writeBuffer map[int64][]byte
+  writeBuffer map[int64]*[]byte
   streamingWriter io.WriteCloser
   writeBufferLock sync.RWMutex
 }
@@ -205,7 +205,7 @@ func (f *s3File) WriteAt(data []byte, offset int64) (int, error) {
   f.writeBufferLock.Lock()
 
   if f.writeBuffer == nil { // somebody's first time?
-    f.writeBuffer = make(map[int64][]byte)
+    f.writeBuffer = make(map[int64]*[]byte)
   }
 
   if offset == f.nextOffset { // we have a hit!
@@ -215,7 +215,7 @@ func (f *s3File) WriteAt(data []byte, offset int64) (int, error) {
 
     f.nextOffset = offset + int64(len(data))
   } else {                    // we have a miss!
-    f.writeBuffer[offset] = data
+    f.writeBuffer[offset] = &data
   }
 
   // If we hit maybe we wrote some data that got us up to an offset that we
@@ -224,7 +224,7 @@ func (f *s3File) WriteAt(data []byte, offset int64) (int, error) {
     // someone else's problem
     f.writeBufferLock.Unlock()
     // Recurse on our data structure
-    f.WriteAt(value, f.nextOffset)
+    f.WriteAt(*value, f.nextOffset)
 
   } else {
     f.writeBufferLock.Unlock()
