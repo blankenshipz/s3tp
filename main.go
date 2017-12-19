@@ -8,6 +8,8 @@ import (
   "io/ioutil"
   "log"
   "net"
+  "net/http"
+  "net/http/pprof"
   "os"
 
   "github.com/aws/aws-sdk-go/service/s3"
@@ -27,11 +29,20 @@ func main() {
   flag.BoolVar(&debugStderr, "e", false, "debug to stderr")
   flag.Parse()
 
+  r := http.NewServeMux()
+  // Register pprof handlers
+  r.HandleFunc("/debug/pprof/", pprof.Index)
+  r.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+  r.HandleFunc("/debug/pprof/profile", pprof.Profile)
+  r.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+  r.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+  go http.ListenAndServe(":8080", r)
+
   debugStream := ioutil.Discard
   if debugStderr {
     debugStream = os.Stderr
   }
-
   // An SSH server is represented by a ServerConfig, which holds
   // certificate details and handles authentication of ServerConns.
   config := &ssh.ServerConfig{
@@ -68,21 +79,31 @@ func main() {
   // Once a ServerConfig has been configured, connections can be
   // accepted.
   listener, err := net.Listen("tcp", "0.0.0.0:22")
+
   if err != nil {
     log.Fatal("failed to listen for connection", err)
   }
+
   fmt.Printf("Listening on %v\n", listener.Addr())
 
-  nConn, err := listener.Accept()
-  if err != nil {
-    log.Fatal("failed to accept incoming connection", err)
-  }
+  for {
+    nConn, err := listener.Accept()
 
+    if err != nil {
+      log.Println("failed to accept incoming connection", err)
+    } else {
+      go handleConnection(nConn, config, debugStream)
+    }
+  }
   // Before use, a handshake must be performed on the incoming net.Conn.
+}
+
+func handleConnection(nConn net.Conn, config *ssh.ServerConfig, debugStream io.Writer) {
   sconn, chans, reqs, err := ssh.NewServerConn(nConn, config)
 
   if err != nil {
-    log.Fatal("failed to handshake", err)
+    log.Println("failed to handshake", err)
+    return
   }
 
   access_key := sconn.Permissions.Extensions["ACCESS_KEY_ID"]
@@ -94,7 +115,6 @@ func main() {
 
   // The incoming Request channel must be serviced.
   go ssh.DiscardRequests(reqs)
-
   // Service the incoming Channel channel.
   for newChannel := range chans {
     // Channels have a type, depending on the application level
@@ -108,7 +128,8 @@ func main() {
     }
     channel, requests, err := newChannel.Accept()
     if err != nil {
-      log.Fatal("could not accept channel.", err)
+      log.Println("could not accept channel.", err)
+      return
     }
     fmt.Fprintf(debugStream, "Channel accepted\n")
 
@@ -137,7 +158,8 @@ func main() {
       server.Close()
       log.Print("sftp client exited session.")
     } else if err != nil {
-      log.Fatal("sftp server completed with error:", err)
+      log.Print("sftp server completed with error:", err)
+      server.Close()
     }
   }
 }
