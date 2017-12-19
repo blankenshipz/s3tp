@@ -25,7 +25,7 @@ const(
 const partsize = 10 * mb
 
 var readConfig = &s3gof3r.Config{
-  Concurrency: 3,
+  Concurrency: 1,
   PartSize: partsize,
   NTry: 10,
   Md5Check: false,
