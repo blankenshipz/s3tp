@@ -146,7 +146,6 @@ func (fs *s3fs) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 }
 
 func (fs *s3fs) Filecmd(r *sftp.Request) error {
-
   return errors.New("foobar")
 }
 
@@ -155,9 +154,9 @@ func (fs *s3fs) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 
   file := &s3File{name: r.Filepath, isdir: false, key: key, bucket: bucket}
 
-  file.OpenStreamingWriter(fs.accessKey, fs.secretKey)
+  _, err := file.OpenStreamingWriter(fs.accessKey, fs.secretKey)
 
-  return file.WriterAt()
+  return file, err
 }
 
 func bucket_parts_from_filepath(p string) (bucket, path string) {
