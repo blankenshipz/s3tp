@@ -234,6 +234,9 @@ func (f *s3File) WriteAt(data []byte, offset int64) (int, error) {
 }
 
 func (f *s3File) OpenStreamingReader(accessKey, secretKey string) (error) {
+  f.readBufferLock.Lock()
+  defer f.readBufferLock.Unlock()
+
   if f.streamingReader != nil {
     return nil
   }
@@ -255,6 +258,9 @@ func (f *s3File) OpenStreamingReader(accessKey, secretKey string) (error) {
 }
 
 func (f *s3File) OpenStreamingWriter(accessKey, secretKey string) (io.WriteCloser, error) {
+  f.writeBufferLock.Lock()
+  defer f.writeBufferLock.Unlock()
+
   if f.streamingWriter != nil {
     return f.streamingWriter, nil
   }
@@ -277,11 +283,19 @@ func (f *s3File) OpenStreamingWriter(accessKey, secretKey string) (io.WriteClose
 
 func (f *s3File) Close() (error) {
   if f.streamingWriter != nil {
+    f.writeBufferLock.Lock()
+
     f.streamingWriter.Close()
+
+    f.writeBufferLock.Unlock()
   }
 
   if f.streamingReader != nil {
+    f.readBufferLock.Lock()
+
     f.streamingReader.Close()
+
+    f.readBufferLock.Unlock()
   }
 
   return nil
