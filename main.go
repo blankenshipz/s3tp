@@ -102,7 +102,7 @@ func handleConnection(nConn net.Conn, config *ssh.ServerConfig, debugStream io.W
   sconn, chans, reqs, err := ssh.NewServerConn(nConn, config)
 
   if err != nil {
-    log.Println("failed to handshake", err)
+    // log.Println("failed to handshake", err)
     return
   }
 
