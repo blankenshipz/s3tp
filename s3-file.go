@@ -8,6 +8,7 @@ import (
   "sync"
   "syscall"
   "time"
+  "runtime/debug"
 
   "github.com/rlmcpherson/s3gof3r"
 )
@@ -282,21 +283,25 @@ func (f *s3File) OpenStreamingWriter(accessKey, secretKey string) (io.WriteClose
 }
 
 func (f *s3File) Close() (error) {
+  err := error(nil)
+
   if f.streamingWriter != nil {
     f.writeBufferLock.Lock()
+    defer f.writeBufferLock.Unlock()
 
-    f.streamingWriter.Close()
-
-    f.writeBufferLock.Unlock()
+    err = f.streamingWriter.Close()
+    f.streamingWriter = nil
+    debug.FreeOSMemory()
   }
 
   if f.streamingReader != nil {
     f.readBufferLock.Lock()
+    defer f.readBufferLock.Unlock()
 
-    f.streamingReader.Close()
-
-    f.readBufferLock.Unlock()
+    err = f.streamingReader.Close()
+    f.streamingReader = nil
+    debug.FreeOSMemory()
   }
 
-  return nil
+  return err
 }
