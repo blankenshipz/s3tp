@@ -24,7 +24,7 @@ const(
 
 const partsize = 10 * mb
 
-var readConfig = &s3gof3r.Config{
+var gof3rConfig = &s3gof3r.Config{
   Concurrency: 1,
   PartSize: partsize,
   NTry: 10,
@@ -124,12 +124,12 @@ func (f *s3File) ReadAt(buffer []byte, offset int64) (int, error) {
     f.readPartsCount = new(int32)
   }
 
-  partNumber := int64(math.Floor(float64(offset) / float64(readConfig.PartSize)))
+  partNumber := int64(math.Floor(float64(offset) / float64(gof3rConfig.PartSize)))
   // ensure we've read up to this point
   // we might be able to switch the map concept for a simple array
   // the keys are consecutive integers
   for i := int64(*f.readPartsCount); i <= partNumber; i++ {
-    buf := make([]byte, readConfig.PartSize)
+    buf := make([]byte, gof3rConfig.PartSize)
     n, err := f.streamingReader.Read(buf)
     if err != nil && err != io.EOF {
       return 0, err
@@ -152,7 +152,7 @@ func (f *s3File) ReadAt(buffer []byte, offset int64) (int, error) {
   lengthNeeded := int64(len(buffer))
   dataLength := int64(val.length)
 
-  start := (offset - (readConfig.PartSize * partNumber))
+  start := (offset - (gof3rConfig.PartSize * partNumber))
   end := start + lengthNeeded
 
   // if the end needed surpasses this part read what we can and then
@@ -246,7 +246,7 @@ func (f *s3File) OpenStreamingReader(accessKey, secretKey string) (error) {
   s3 := s3gof3r.New("", keys)
   b := s3.Bucket(f.bucket)
 
-  r, _, err := b.GetReader(f.key, readConfig)
+  r, _, err := b.GetReader(f.key, gof3rConfig)
 
   if err != nil {
     return err
@@ -270,7 +270,7 @@ func (f *s3File) OpenStreamingWriter(accessKey, secretKey string) (io.WriteClose
   s3 := s3gof3r.New("", keys)
   b := s3.Bucket(f.bucket)
 
-  w, err := b.PutWriter(f.key, nil, nil)
+  w, err := b.PutWriter(f.key, nil, gof3rConfig)
 
   if err != nil {
     return nil, err
