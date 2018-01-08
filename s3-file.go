@@ -5,10 +5,11 @@ import (
   "io"
   "math"
   "os"
+  "runtime/debug"
+  "strconv"
   "sync"
   "syscall"
   "time"
-  "runtime/debug"
 
   "github.com/rlmcpherson/s3gof3r"
 )
@@ -23,10 +24,22 @@ const(
   eb
 )
 
+var concurrency = (func() int {
+  val := os.Getenv("CONCURRENCY")
+
+  if val == "" {
+    return 1
+  } else {
+    i, _ := strconv.Atoi(val)
+
+    return i
+  }
+})()
+
 const partsize = 10 * mb
 
 var gof3rConfig = &s3gof3r.Config{
-  Concurrency: 1,
+  Concurrency: concurrency,
   PartSize: partsize,
   NTry: 10,
   Md5Check: false,
