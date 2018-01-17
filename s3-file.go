@@ -150,10 +150,10 @@ func (f *s3File) ReadAt(buffer []byte, offset int64) (int, error) {
     }
     *f.readPartsCount = *f.readPartsCount + 1
 
+    f.readBuffer[i] = readCounter{data: buf, readCount: new(int64), length: n}
+
     if err == io.EOF {
-      f.readBuffer[i] = readCounter{data: buf, readCount: new(int64), length: n, eof: true}
-    } else {
-      f.readBuffer[i] = readCounter{data: buf, readCount: new(int64), length: n, eof: false}
+      f.readBuffer[i].eof = true
     }
   }
 
