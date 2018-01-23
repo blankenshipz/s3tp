@@ -1,7 +1,6 @@
 package main
 
 import (
-  "errors"
   "io"
   "math"
   "os"
@@ -160,7 +159,7 @@ func (f *s3File) ReadAt(buffer []byte, offset int64) (int, error) {
   val, ok := f.readBuffer[partNumber]
 
   if !ok {
-    return 0, errors.New("cannot read from s3")
+    return 0, os.ErrNotExist
   }
 
   lengthNeeded := int64(len(buffer))
@@ -196,22 +195,30 @@ func (f *s3File) ReadAt(buffer []byte, offset int64) (int, error) {
       copy(buffer, val.data[start:end])
       *val.readCount += lengthNeeded
     } else { // EOF
-      copy(buffer, val.data[start:dataLength])
-      *val.readCount += (dataLength - start)
+      if start <= dataLength {
+        copy(buffer, val.data[start:dataLength])
+        *val.readCount += (dataLength - start)
+      }
     }
-
     f.readBufferLock.Unlock()
   }
   // if all the data has been read remove this part
   // we may want to add some stuff here around reorganizing the map
-  if *val.readCount == dataLength {
-    delete(f.readBuffer, partNumber)
-  }
-
   if end >= dataLength && val.eof {
-    return int((dataLength - start)), io.EOF
+    if start >= dataLength {
+      if (*val.readCount == dataLength) {
+        delete(f.readBuffer, partNumber)
+      }
+      return 0, io.EOF
+    } else {
+      return int((dataLength - start)), io.EOF
+    }
   } else {
-    return len(buffer), nil
+    if val.eof {
+      return len(buffer), io.EOF
+    } else {
+      return len(buffer), nil
+    }
   }
 }
 
