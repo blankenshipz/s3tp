@@ -1,23 +1,32 @@
 #!/bin/bash
 set -e
+set -x
 
 SSH_ALLOWED_PORT=4321
 
 NOMAD_SERVER_PRIVATE_IP=$(
   aws ec2 describe-instances \
     --filters 'Name=tag:Name,Values=nomad-server' | \
-  jq -r '.Reservations[0].Instances[0].PrivateIpAddress'
+  jq -r '.Reservations[0].Instances | map(select(.State.Name | contains ("running"))) | .[0].PrivateIpAddress'
 )
 
 NOMAD_CLIENT_PUBLIC_IP=$(
   aws ec2 describe-instances \
-    --filters 'Name=tag:Name,Values=nomad-client' | \
-  jq -r '.Reservations[0].Instances[0].PublicIpAddress'
+    --filters 'Name=tag:Name,Values=nomad-client-patron' | \
+  jq -r '.Reservations[].Instances[] | select(.State.Name | contains ("running")) | [.][0].PublicIpAddress'
+)
+
+NOMAD_CLIENT_PRIVATE_IP=$(
+  aws ec2 describe-instances \
+    --filters 'Name=tag:Name,Values=nomad-client-patron' | \
+  jq -r '.Reservations[].Instances[] | select(.State.Name | contains ("running")) | [.][0].PrivateIpAddress'
 )
 
 ssh \
   -o "StrictHostKeyChecking=no" \
   -N \
-  -L 4646:$NOMAD_SERVER_PRIVATE_IP:4646 \
-  -p $SSH_ALLOWED_PORT \
-  admin@$NOMAD_CLIENT_PUBLIC_IP
+  -L 4646:${NOMAD_SERVER_PRIVATE_IP}:4646 \
+  -L 3000:${NOMAD_CLIENT_PRIVATE_IP}:3000 \
+  -L 9090:${NOMAD_CLIENT_PRIVATE_IP}:9090 \
+  -p ${SSH_ALLOWED_PORT} \
+  admin@${NOMAD_CLIENT_PUBLIC_IP}
