@@ -4,6 +4,7 @@ import (
   "io"
   "math"
   "os"
+  _ "log"
   "runtime/debug"
   "strconv"
   "sync"
@@ -56,6 +57,7 @@ type readCounter struct {
 type orderedS3Reader struct {
   readBuffer map[int64]readCounter
   readPartsCount *int32
+  readBytesCount int64
   streamingReader io.ReadCloser
   readBufferLock sync.RWMutex
 }
@@ -63,6 +65,7 @@ type orderedS3Reader struct {
 type orderedS3Writer struct {
   nextOffset int64
   writeBuffer map[int64]*[]byte
+  writtenBytesCount int64
   streamingWriter io.WriteCloser
   writeBufferLock sync.RWMutex
 }
@@ -81,6 +84,7 @@ type s3File struct {
   size        int64
   orderedS3Writer
   orderedS3Reader
+  *s3fs
 }
 
 // Have s3File fulfill os.FileInfo interface
@@ -211,9 +215,13 @@ func (f *s3File) ReadAt(buffer []byte, offset int64) (int, error) {
       }
       return 0, io.EOF
     } else {
+      f.readBytesCount += int64(dataLength - start)
+
       return int((dataLength - start)), io.EOF
     }
   } else {
+    f.readBytesCount += int64(len(buffer))
+
     if val.eof {
       return len(buffer), io.EOF
     } else {
@@ -230,6 +238,7 @@ func (f *s3File) WriteAt(data []byte, offset int64) (int, error) {
   }
 
   if offset == f.nextOffset { // we have a hit!
+    f.writtenBytesCount += int64(len(data))
     f.streamingWriter.Write(data)
 
     delete(f.writeBuffer, offset) // if we recursed to get here this could happen
@@ -303,7 +312,7 @@ func (f *s3File) OpenStreamingWriter(accessKey, secretKey string) (io.WriteClose
 }
 
 func (f *s3File) Close() (error) {
-  err := error(nil)
+  var err error
 
   if f.streamingWriter != nil {
     f.writeBufferLock.Lock()
@@ -312,6 +321,10 @@ func (f *s3File) Close() (error) {
     err = f.streamingWriter.Close()
     f.streamingWriter = nil
     debug.FreeOSMemory()
+
+    if f.writtenBytesCount > 0 {
+      go persist_event(f.sessionID, f.accessKey, "WRITE", f.writtenBytesCount)
+    }
   }
 
   if f.streamingReader != nil {
@@ -321,6 +334,14 @@ func (f *s3File) Close() (error) {
     err = f.streamingReader.Close()
     f.streamingReader = nil
     debug.FreeOSMemory()
+
+    if f.readBytesCount > 0 {
+      go persist_event(f.sessionID, f.accessKey, "READ", f.readBytesCount)
+    }
+  }
+
+  if err != nil {
+    return err
   }
 
   return err

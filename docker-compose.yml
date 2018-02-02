@@ -9,26 +9,13 @@ services:
     ports:
       - "22:22"
       - "8080:8080"
-    # links:
-    #   - nginx-proxy
-    #   - fakes3
+    links:
+      - postgres
     volumes:
       - .:/go/src/app
     env_file: .secrets
 
-  # fakes3:
-  #   image: lphoward/fake-s3
-  #   ports:
-  #     - "4569:4569"
-  #   environment:
-  #     - VIRTUAL_HOST=s3.amazonaws.com
-  #     - VIRTUAL_PROTO=https
-
-  # nginx-proxy:
-  #   image: jwilder/nginx-proxy
-  #   ports:
-  #     - "80:80"
-  #     - "443:443"
-  #   volumes:
-  #     - ./nginx-certs:/etc/nginx/certs
-  #     - /var/run/docker.sock:/tmp/docker.sock:ro
+  postgres:
+    image: postgres:latest
+    ports:
+      - "5432:5432"

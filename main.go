@@ -2,6 +2,7 @@
 package main
 
 import (
+  "database/sql"
   "flag"
   "fmt"
   "io"
@@ -13,13 +14,47 @@ import (
   "os"
 
   "github.com/aws/aws-sdk-go/service/s3"
+  _ "github.com/lib/pq"
   "github.com/pkg/sftp"
+  "github.com/prometheus/client_golang/prometheus"
+  "github.com/prometheus/client_golang/prometheus/promhttp"
   "golang.org/x/crypto/ssh"
 )
 
+var (
+  connectedClients = prometheus.NewGauge(prometheus.GaugeOpts{
+    Name: "connected_clients",
+    Help: "Number of currently connected clients",
+  })
+)
+
+var db *sql.DB
+var DatabaseURL string
+
+func init() {
+  prometheus.MustRegister(connectedClients)
+  DatabaseURL = os.Getenv("DATABASE_URL")
+}
+
+func servePrometheusMetrics() {
+  http.Handle("/metrics", promhttp.Handler())
+  log.Fatal(http.ListenAndServe(":8081", nil))
+}
+
+func serveProfiling() {
+  r := http.NewServeMux()
+  // Register pprof handlers
+  r.HandleFunc("/debug/pprof/", pprof.Index)
+  r.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+  r.HandleFunc("/debug/pprof/profile", pprof.Profile)
+  r.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+  r.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+  http.ListenAndServe(":8080", r)
+}
+
 // Based on example server code from golang.org/x/crypto/ssh and server_standalone
 func main() {
-
   var (
     readOnly    bool
     debugStderr bool
@@ -29,15 +64,17 @@ func main() {
   flag.BoolVar(&debugStderr, "e", false, "debug to stderr")
   flag.Parse()
 
-  r := http.NewServeMux()
-  // Register pprof handlers
-  r.HandleFunc("/debug/pprof/", pprof.Index)
-  r.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-  r.HandleFunc("/debug/pprof/profile", pprof.Profile)
-  r.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-  r.HandleFunc("/debug/pprof/trace", pprof.Trace)
+  var err error
 
-  go http.ListenAndServe(":8080", r)
+  db, err = sql.Open("postgres", DatabaseURL)
+  defer db.Close()
+
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  go servePrometheusMetrics()
+  go serveProfiling()
 
   debugStream := ioutil.Discard
   if debugStderr {
@@ -99,6 +136,9 @@ func main() {
 }
 
 func handleConnection(nConn net.Conn, config *ssh.ServerConfig, debugStream io.Writer) {
+  connectedClients.Inc()
+  defer connectedClients.Dec()
+
   sconn, chans, reqs, err := ssh.NewServerConn(nConn, config)
 
   if err != nil {
@@ -153,12 +193,13 @@ func handleConnection(nConn net.Conn, config *ssh.ServerConfig, debugStream io.W
     }(requests)
 
     root := S3Handler(access_key, secret_key)
+
     server := sftp.NewRequestServer(channel, root)
     if err := server.Serve(); err == io.EOF {
       server.Close()
-      log.Print("sftp client exited session.")
+      log.Println("sftp client exited session.")
     } else if err != nil {
-      log.Print("sftp server completed with error:", err)
+      log.Println("sftp server completed with error:", err)
       server.Close()
     }
   }

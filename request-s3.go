@@ -6,10 +6,12 @@ import (
   "os"
   "sort"
   "strings"
+  _ "log"
 
   "github.com/aws/aws-sdk-go/aws"
   "github.com/aws/aws-sdk-go/service/s3"
   "github.com/pkg/sftp"
+  "github.com/satori/go.uuid"
   _"github.com/rlmcpherson/s3gof3r"
 )
 
@@ -30,8 +32,14 @@ func (f s3listerat) ListAt(ls []os.FileInfo, offset int64) (int, error) {
   return n, nil
 }
 
-func S3Handler(access_key, secret_key string) sftp.Handlers {
-  s3fs := &s3fs{S3: s3Client(access_key, secret_key), accessKey: access_key, secretKey: secret_key}
+func S3Handler(accessKey, secretKey string) sftp.Handlers {
+  s3fs := &s3fs{
+    S3: s3Client(accessKey, secretKey),
+    accessKey: accessKey,
+    secretKey: secretKey,
+    sessionID: uuid.NewV4(),
+  }
+
   return sftp.Handlers{s3fs, s3fs, s3fs, s3fs}
 }
 
@@ -40,6 +48,7 @@ type s3fs struct {
   *s3.S3
   accessKey string
   secretKey string
+  sessionID uuid.UUID
 }
 
 func (fs *s3fs) file_for_path(p string) (*s3File, error) {
@@ -58,7 +67,17 @@ func (fs *s3fs) file_for_path(p string) (*s3File, error) {
     }
     return nil, err
   }
-  return &s3File{name: p, isdir: false, key: key, size: *output.ContentLength, bucket: bucket}, nil
+
+  file := &s3File{
+    name: p,
+    isdir: false,
+    key: key,
+    size: *output.ContentLength,
+    bucket: bucket,
+    s3fs: fs,
+  }
+
+  return file, nil
 }
 
 func (fs *s3fs) files_for_path(p string) (map[string]*s3File) {
@@ -121,6 +140,7 @@ func (fs *s3fs) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
       list[i] = files[fn]
     }
 
+    go persist_event(fs.sessionID, fs.accessKey, "LIST", 0)
     return s3listerat(list), nil
   case "Stat":
     file, err := fs.file_for_path(r.Filepath)
@@ -128,6 +148,8 @@ func (fs *s3fs) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
     if err != nil {
       return nil, err
     }
+
+    go persist_event(fs.sessionID, fs.accessKey, "STAT", 0)
     return s3listerat([]os.FileInfo{file}), nil
   }
   return nil, nil
@@ -152,7 +174,13 @@ func (fs *s3fs) Filecmd(r *sftp.Request) error {
 func (fs *s3fs) Filewrite(r *sftp.Request) (io.WriterAt, error) {
   bucket, key := bucket_parts_from_filepath(r.Filepath)
 
-  file := &s3File{name: r.Filepath, isdir: false, key: key, bucket: bucket}
+  file := &s3File{
+    name: r.Filepath,
+    isdir: false,
+    key: key,
+    bucket: bucket,
+    s3fs: fs,
+  }
 
   _, err := file.OpenStreamingWriter(fs.accessKey, fs.secretKey)
 
