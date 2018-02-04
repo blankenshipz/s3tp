@@ -22,11 +22,14 @@ NOMAD_CLIENT_PRIVATE_IP=$(
   jq -r '.Reservations[].Instances[] | select(.State.Name | contains ("running")) | [.][0].PrivateIpAddress'
 )
 
+POSTGRES_ALEXANDRIA_ADDRESS=$(aws rds describe-db-instances | jq -r '.DBInstances[].Endpoint.Address')
+
 ssh \
   -o "StrictHostKeyChecking=no" \
   -N \
   -L 4646:${NOMAD_SERVER_PRIVATE_IP}:4646 \
   -L 3000:${NOMAD_CLIENT_PRIVATE_IP}:3000 \
   -L 9090:${NOMAD_CLIENT_PRIVATE_IP}:9090 \
+  -L 5432:${POSTGRES_ALEXANDRIA_ADDRESS}:5432 \
   -p ${SSH_ALLOWED_PORT} \
   admin@${NOMAD_CLIENT_PUBLIC_IP}
