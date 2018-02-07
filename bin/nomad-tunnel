@@ -22,6 +22,12 @@ NOMAD_CLIENT_PRIVATE_IP=$(
   jq -r '.Reservations[].Instances[] | select(.State.Name | contains ("running")) | [.][0].PrivateIpAddress'
 )
 
+NOMAD_S3TP_CLIENT_PRIVATE_IP=$(
+  aws ec2 describe-instances \
+    --filters 'Name=tag:Name,Values=nomad-client-s3tp' | \
+  jq -r '.Reservations[].Instances[] | select(.State.Name | contains ("running")) | [.][0].PrivateIpAddress'
+)
+
 POSTGRES_ALEXANDRIA_ADDRESS=$(aws rds describe-db-instances | jq -r '.DBInstances[].Endpoint.Address')
 
 ssh \
@@ -31,5 +37,6 @@ ssh \
   -L 3000:${NOMAD_CLIENT_PRIVATE_IP}:3000 \
   -L 9090:${NOMAD_CLIENT_PRIVATE_IP}:9090 \
   -L 5432:${POSTGRES_ALEXANDRIA_ADDRESS}:5432 \
+  -L 8080:${NOMAD_S3TP_CLIENT_PRIVATE_IP}:8080 \
   -p ${SSH_ALLOWED_PORT} \
   admin@${NOMAD_CLIENT_PUBLIC_IP}
