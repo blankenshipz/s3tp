@@ -1,10 +1,10 @@
 package main
 
 import (
+  "errors"
   "io"
   "math"
   "os"
-  _ "log"
   "runtime/debug"
   "strconv"
   "sync"
@@ -49,17 +49,19 @@ var gof3rConfig = &s3gof3r.Config{
 
 type readCounter struct {
   data []byte
-  readCount *int64
-  length int
+  readCount int64
+  length int64
   eof bool
 }
 
 type orderedS3Reader struct {
-  readBuffer map[int64]readCounter
-  readPartsCount *int32
+  readBuffer *readCounter
+  readPartsCount *int64
   readBytesCount int64
   streamingReader io.ReadCloser
   readBufferLock sync.RWMutex
+  readWaiters []chan int64
+  finishWaiters []chan int64
 }
 
 type orderedS3Writer struct {
@@ -132,54 +134,100 @@ func (f *s3File) WriterAt() (io.WriterAt, error) {
   return f, nil
 }
 
+func (f *s3File) readNextPart() (int, error) {
+  for _, channel := range f.finishWaiters {
+    channel <- *f.readPartsCount
+  }
+
+  f.readBuffer = new(readCounter)
+  buf := make([]byte, gof3rConfig.PartSize)
+
+  n, err := f.streamingReader.Read(buf)
+
+  if err != nil && err != io.EOF {
+    return 0, err
+  }
+
+  *f.readPartsCount = *f.readPartsCount + 1
+  f.readBuffer.length = int64(n)
+  f.readBuffer.data = buf
+
+  if err == io.EOF {
+    f.readBuffer.eof = true
+  } else {
+    f.readBuffer.eof = false
+  }
+
+  for _, channel := range f.readWaiters {
+    channel <- *f.readPartsCount
+  }
+
+  return n, nil
+}
+
+func (f *s3File) waitFor(partNumber int64, waiters *[]chan int64) {
+    waiting := make(chan int64)
+    *waiters = append(*waiters, waiting)
+
+    f.readBufferLock.Unlock()
+    for i := range waiting {
+      if i == partNumber {
+        break
+      }
+    }
+    f.readBufferLock.Lock()
+
+    // remove this waiter
+    for i, x := range *waiters {
+      if x == waiting {
+        (*waiters)[i] = (*waiters)[len(*waiters)-1]
+        (*waiters)[len(*waiters)-1] = nil
+        *waiters = (*waiters)[:len(*waiters)-1]
+      }
+    }
+    close(waiting)
+}
+
 func (f *s3File) ReadAt(buffer []byte, offset int64) (int, error) {
-  // check my map for the data
   f.readBufferLock.Lock()
+  defer f.readBufferLock.Unlock()
 
   if f.readBuffer == nil {
-    f.readBuffer = make(map[int64]readCounter)
-    f.readPartsCount = new(int32)
+    f.readPartsCount = new(int64)
+    *f.readPartsCount = -1
+    f.readNextPart()
   }
 
   partNumber := int64(math.Floor(float64(offset) / float64(gof3rConfig.PartSize)))
-  // ensure we've read up to this point
-  // we might be able to switch the map concept for a simple array
-  // the keys are consecutive integers
-  for i := int64(*f.readPartsCount); i <= partNumber; i++ {
-    buf := make([]byte, gof3rConfig.PartSize)
-    n, err := f.streamingReader.Read(buf)
-    if err != nil && err != io.EOF {
-      return 0, err
+
+  // If we haven't gottten to a part that contains this data then wait for it
+  if partNumber != *f.readPartsCount {
+    if partNumber < *f.readPartsCount {
+      return 0, errors.New("Offset not available for reading")
     }
-    *f.readPartsCount = *f.readPartsCount + 1
 
-    if err == io.EOF {
-      f.readBuffer[i] = readCounter{data: buf, readCount: new(int64), length: n, eof: true}
-    } else {
-      f.readBuffer[i] = readCounter{data: buf, readCount: new(int64), length: n, eof: false}
-    }
-  }
-
-  val, ok := f.readBuffer[partNumber]
-
-  if !ok {
-    return 0, os.ErrNotExist
+    f.waitFor(partNumber, &f.readWaiters)
   }
 
   lengthNeeded := int64(len(buffer))
-  dataLength := int64(val.length)
-
+  dataLength := int64(f.readBuffer.length)
   start := (offset - (gof3rConfig.PartSize * partNumber))
   end := start + lengthNeeded
 
-  // if the end needed surpasses this part read what we can and then
-  // read additional data from the following part(s) (recurse)
-  if end > dataLength && !val.eof {
-    copy(buffer, val.data[start:])
-
+  // if we need more then we have then stuff the buffer with what we've got and
+  // ask for more - however we need to make sure this buffer is done before we
+  // move on
+  readBytesCount := int64(0)
+  if end > dataLength && !f.readBuffer.eof {
+    copy(buffer, f.readBuffer.data[start:])
     bytesRead := dataLength - start
+    f.readBuffer.readCount += bytesRead
 
-    *val.readCount += bytesRead
+    if f.readBuffer.readCount != f.readBuffer.length {
+      f.waitFor(partNumber, &f.finishWaiters)
+    } else {
+      f.readNextPart()
+    }
 
     readMoreSize := lengthNeeded - bytesRead
     readMoreBuffer := make([]byte, readMoreSize)
@@ -187,46 +235,42 @@ func (f *s3File) ReadAt(buffer []byte, offset int64) (int, error) {
 
     f.readBufferLock.Unlock()
 
+    // err could be EOF
     _, err := f.ReadAt(readMoreBuffer, readMoreOffset)
 
-    if err != nil {
+    f.readBufferLock.Lock()
+
+    if err != nil && err != io.EOF {
       return 0, err
     }
 
     copy(buffer[bytesRead + 1:], readMoreBuffer)
+    readBytesCount = lengthNeeded
   } else { // we can get everything we need right here
     if end <= dataLength {
-      copy(buffer, val.data[start:end])
-      *val.readCount += lengthNeeded
+      copy(buffer, f.readBuffer.data[start:end])
+      f.readBuffer.readCount += lengthNeeded
+      readBytesCount = lengthNeeded
     } else { // EOF
       if start <= dataLength {
-        copy(buffer, val.data[start:dataLength])
-        *val.readCount += (dataLength - start)
+        copy(buffer, f.readBuffer.data[start:dataLength])
+        readBytesCount = (dataLength - start)
+        f.readBuffer.readCount += readBytesCount
       }
     }
-    f.readBufferLock.Unlock()
+  }
+
+  f.readBytesCount += readBytesCount
+
+  if f.readBuffer.readCount == f.readBuffer.length {
+    f.readNextPart()
   }
   // if all the data has been read remove this part
   // we may want to add some stuff here around reorganizing the map
-  if end >= dataLength && val.eof {
-    if start >= dataLength {
-      if (*val.readCount == dataLength) {
-        delete(f.readBuffer, partNumber)
-      }
-      return 0, io.EOF
-    } else {
-      f.readBytesCount += int64(dataLength - start)
-
-      return int((dataLength - start)), io.EOF
-    }
+  if f.readBuffer.eof {
+    return int(readBytesCount), io.EOF
   } else {
-    f.readBytesCount += int64(len(buffer))
-
-    if val.eof {
-      return len(buffer), io.EOF
-    } else {
-      return len(buffer), nil
-    }
+    return int(readBytesCount), nil
   }
 }
 
