@@ -1,9 +1,7 @@
 package main
 
 import (
-  "errors"
   "io"
-  "math"
   "os"
   "runtime/debug"
   "strconv"
@@ -36,7 +34,7 @@ var concurrency = (func() int {
   }
 })()
 
-const partsize = 10 * mb
+const partsize = 5 * mb
 
 var gof3rConfig = &s3gof3r.Config{
   Concurrency: concurrency,
@@ -47,21 +45,11 @@ var gof3rConfig = &s3gof3r.Config{
   Client: s3gof3r.ClientWithTimeout(5 * time.Second),
 }
 
-type readCounter struct {
-  data []byte
-  readCount int64
-  length int64
-  eof bool
-}
-
 type orderedS3Reader struct {
-  readBuffer *readCounter
-  readPartsCount *int64
   readBytesCount int64
   streamingReader io.ReadCloser
   readBufferLock sync.RWMutex
-  readWaiters []chan int64
-  finishWaiters []chan int64
+  readWaiters map[int64]chan struct{}
 }
 
 type orderedS3Writer struct {
@@ -134,144 +122,46 @@ func (f *s3File) WriterAt() (io.WriterAt, error) {
   return f, nil
 }
 
-func (f *s3File) readNextPart() (int, error) {
-  for _, channel := range f.finishWaiters {
-    channel <- *f.readPartsCount
+func (f *s3File) waitFor(offset int64) {
+  waiting := make(chan struct{})
+  defer close(waiting)
+
+  f.readWaiters[offset] = waiting
+  defer delete(f.readWaiters, offset)
+
+  f.readBufferLock.Unlock()
+  for range waiting {
+    break
   }
-
-  f.readBuffer = new(readCounter)
-  buf := make([]byte, gof3rConfig.PartSize)
-
-  n, err := f.streamingReader.Read(buf)
-
-  if err != nil && err != io.EOF {
-    return 0, err
-  }
-
-  *f.readPartsCount = *f.readPartsCount + 1
-  f.readBuffer.length = int64(n)
-  f.readBuffer.data = buf
-
-  if err == io.EOF {
-    f.readBuffer.eof = true
-  } else {
-    f.readBuffer.eof = false
-  }
-
-  for _, channel := range f.readWaiters {
-    channel <- *f.readPartsCount
-  }
-
-  return n, nil
+  f.readBufferLock.Lock()
 }
 
-func (f *s3File) waitFor(partNumber int64, waiters *[]chan int64) {
-    waiting := make(chan int64)
-    *waiters = append(*waiters, waiting)
+func (f *s3File) notifyWaiting(offset int64) {
+  channel, ok := f.readWaiters[offset]
 
-    f.readBufferLock.Unlock()
-    for i := range waiting {
-      if i == partNumber {
-        break
-      }
-    }
-    f.readBufferLock.Lock()
-
-    // remove this waiter
-    for i, x := range *waiters {
-      if x == waiting {
-        (*waiters)[i] = (*waiters)[len(*waiters)-1]
-        (*waiters)[len(*waiters)-1] = nil
-        *waiters = (*waiters)[:len(*waiters)-1]
-      }
-    }
-    close(waiting)
+  if ok {
+    channel <- struct{}{}
+  }
 }
 
 func (f *s3File) ReadAt(buffer []byte, offset int64) (int, error) {
   f.readBufferLock.Lock()
   defer f.readBufferLock.Unlock()
 
-  if f.readBuffer == nil {
-    f.readPartsCount = new(int64)
-    *f.readPartsCount = -1
-    f.readNextPart()
+  if offset != f.readBytesCount {
+    f.waitFor(offset)
   }
 
-  partNumber := int64(math.Floor(float64(offset) / float64(gof3rConfig.PartSize)))
+  // read the data
+  n, err := f.streamingReader.Read(buffer)
 
-  // If we haven't gottten to a part that contains this data then wait for it
-  if partNumber != *f.readPartsCount {
-    if partNumber < *f.readPartsCount {
-      return 0, errors.New("Offset not available for reading")
-    }
+  // update our position
+  f.readBytesCount += int64(n)
 
-    f.waitFor(partNumber, &f.readWaiters)
-  }
+  // let the next guy know
+  f.notifyWaiting(f.readBytesCount)
 
-  lengthNeeded := int64(len(buffer))
-  dataLength := int64(f.readBuffer.length)
-  start := (offset - (gof3rConfig.PartSize * partNumber))
-  end := start + lengthNeeded
-
-  // if we need more then we have then stuff the buffer with what we've got and
-  // ask for more - however we need to make sure this buffer is done before we
-  // move on
-  readBytesCount := int64(0)
-  if end > dataLength && !f.readBuffer.eof {
-    copy(buffer, f.readBuffer.data[start:])
-    bytesRead := dataLength - start
-    f.readBuffer.readCount += bytesRead
-
-    if f.readBuffer.readCount != f.readBuffer.length {
-      f.waitFor(partNumber, &f.finishWaiters)
-    } else {
-      f.readNextPart()
-    }
-
-    readMoreSize := lengthNeeded - bytesRead
-    readMoreBuffer := make([]byte, readMoreSize)
-    readMoreOffset := dataLength + 1
-
-    f.readBufferLock.Unlock()
-
-    // err could be EOF
-    _, err := f.ReadAt(readMoreBuffer, readMoreOffset)
-
-    f.readBufferLock.Lock()
-
-    if err != nil && err != io.EOF {
-      return 0, err
-    }
-
-    copy(buffer[bytesRead + 1:], readMoreBuffer)
-    readBytesCount = lengthNeeded
-  } else { // we can get everything we need right here
-    if end <= dataLength {
-      copy(buffer, f.readBuffer.data[start:end])
-      f.readBuffer.readCount += lengthNeeded
-      readBytesCount = lengthNeeded
-    } else { // EOF
-      if start <= dataLength {
-        copy(buffer, f.readBuffer.data[start:dataLength])
-        readBytesCount = (dataLength - start)
-        f.readBuffer.readCount += readBytesCount
-      }
-    }
-  }
-
-  f.readBytesCount += readBytesCount
-
-  if f.readBuffer.readCount == f.readBuffer.length {
-    f.readNextPart()
-  }
-  // if all the data has been read remove this part
-  // we may want to add some stuff here around reorganizing the map
-  if f.readBuffer.eof {
-    return int(readBytesCount), io.EOF
-  } else {
-    return int(readBytesCount), nil
-  }
+  return n, err
 }
 
 func (f *s3File) WriteAt(data []byte, offset int64) (int, error) {
@@ -326,6 +216,7 @@ func (f *s3File) OpenStreamingReader(accessKey, secretKey string) (error) {
     return err
   }
 
+  f.readWaiters = make(map[int64] chan struct{})
   f.streamingReader = r
 
   return nil
