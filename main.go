@@ -13,7 +13,6 @@ import (
   "net/http/pprof"
   "os"
 
-  "github.com/aws/aws-sdk-go/service/s3"
   _ "github.com/lib/pq"
   "github.com/pkg/sftp"
   "github.com/prometheus/client_golang/prometheus"
@@ -84,14 +83,7 @@ func main() {
   // certificate details and handles authentication of ServerConns.
   config := &ssh.ServerConfig{
     PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-      // Should use constant-time compare (or better, salt+hash) in
-      // a production setting.
-      client := s3Client(c.User(), string(pass))
-      input := &s3.ListBucketsInput{}
-
-      _, err := client.ListBuckets(input)
-
-      if err != nil {
+      if len(c.User()) != 20 {
         return nil, fmt.Errorf("Authentication rejected for %q", c.User())
       }
 
