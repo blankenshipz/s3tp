@@ -183,6 +183,7 @@ func (f *s3File) WriteAt(data []byte, offset int64) (int, error) {
   f.writeBufferLock.Lock()
 
   if offset > fileSizeLimitBytes {
+    f.writeBufferLock.Unlock()
     return 0, errors.New("Max upload size exceeded")
   }
 
