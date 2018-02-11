@@ -53,7 +53,7 @@ func init() {
 
 var gof3rConfig = &s3gof3r.Config{
   Concurrency: concurrency,
-  PartSize: initialPartSizeBytes,
+  PartSize: 5 * mb, // initialPartSizseBytes
   NTry: 10,
   Md5Check: false,
   Scheme: "https",
