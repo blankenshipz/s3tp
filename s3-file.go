@@ -1,6 +1,7 @@
 package main
 
 import (
+  "errors"
   "io"
   "os"
   "runtime/debug"
@@ -22,23 +23,37 @@ const(
   eb
 )
 
-var concurrency = (func() int {
-  val := os.Getenv("CONCURRENCY")
+var (
+  concurrency int
+  fileSizeLimitBytes int64
+  fileSizeLimitMB int
+  initialPartSizeMB int
+  initialPartSizeBytes int64
+)
 
-  if val == "" {
-    return 1
+func setFromENV(env string, variable *int, defaultValue int) {
+  val := os.Getenv(env)
+  i, err := strconv.Atoi(val)
+
+  if err != nil || val == "" {
+    *variable = defaultValue
   } else {
-    i, _ := strconv.Atoi(val)
-
-    return i
+    *variable = i
   }
-})()
+}
 
-const partsize = 5 * mb
+func init() {
+  setFromENV("CONCURRRENCY", &concurrency, 2)
+  setFromENV("INITIAL_PART_SIZE_MB", &initialPartSizeMB, 5)
+  setFromENV("FILE_SIZE_LIMIT_MB", &fileSizeLimitMB, 5000)
+
+  initialPartSizeBytes = int64(initialPartSizeMB) * mb
+  fileSizeLimitBytes = int64(fileSizeLimitMB) * mb
+}
 
 var gof3rConfig = &s3gof3r.Config{
   Concurrency: concurrency,
-  PartSize: partsize,
+  PartSize: initialPartSizeBytes,
   NTry: 10,
   Md5Check: false,
   Scheme: "https",
@@ -166,6 +181,10 @@ func (f *s3File) ReadAt(buffer []byte, offset int64) (int, error) {
 
 func (f *s3File) WriteAt(data []byte, offset int64) (int, error) {
   f.writeBufferLock.Lock()
+
+  if offset > fileSizeLimitBytes {
+    return 0, errors.New("Max upload size exceeded")
+  }
 
   if f.writeBuffer == nil { // somebody's first time?
     f.writeBuffer = make(map[int64]*[]byte)
