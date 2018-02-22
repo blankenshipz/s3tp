@@ -1,0 +1,16 @@
+#!/bin/bash
+set -e
+set -x
+
+NOMAD_CLIENT_PUBLIC_IP=$(
+  aws ec2 describe-instances \
+    --filters 'Name=tag:Name,Values=nomad-client-patron' | \
+  jq -r '[.Reservations[].Instances[] | select(.State.Name | contains ("running"))][0].PublicIpAddress'
+)
+
+ssh \
+  -S ssh-control-socket \
+  -O exit \
+  admin@${NOMAD_CLIENT_PUBLIC_IP}
+
+

@@ -7,32 +7,34 @@ SSH_ALLOWED_PORT=4321
 NOMAD_SERVER_PRIVATE_IP=$(
   aws ec2 describe-instances \
     --filters 'Name=tag:Name,Values=nomad-server' | \
-  jq -r '.Reservations[0].Instances | map(select(.State.Name | contains ("running"))) | .[0].PrivateIpAddress'
+  jq -r '[.Reservations[].Instances[] | select(.State.Name | contains ("running"))][0].PrivateIpAddress'
 )
 
 NOMAD_CLIENT_PUBLIC_IP=$(
   aws ec2 describe-instances \
     --filters 'Name=tag:Name,Values=nomad-client-patron' | \
-  jq -r '.Reservations[].Instances[] | select(.State.Name | contains ("running")) | [.][0].PublicIpAddress'
+  jq -r '[.Reservations[].Instances[] | select(.State.Name | contains ("running"))][0].PublicIpAddress'
 )
 
 NOMAD_CLIENT_PRIVATE_IP=$(
   aws ec2 describe-instances \
     --filters 'Name=tag:Name,Values=nomad-client-patron' | \
-  jq -r '.Reservations[].Instances[] | select(.State.Name | contains ("running")) | [.][0].PrivateIpAddress'
+  jq -r '[.Reservations[].Instances[] | select(.State.Name | contains ("running"))][0].PrivateIpAddress'
 )
 
 NOMAD_S3TP_CLIENT_PRIVATE_IP=$(
   aws ec2 describe-instances \
     --filters 'Name=tag:Name,Values=nomad-client-s3tp' | \
-  jq -r '.Reservations[].Instances[] | select(.State.Name | contains ("running")) | [.][0].PrivateIpAddress'
+  jq -r '[.Reservations[].Instances[] | select(.State.Name | contains ("running"))][0].PrivateIpAddress'
 )
 
-POSTGRES_ALEXANDRIA_ADDRESS=$(aws rds describe-db-instances | jq -r '.DBInstances[].Endpoint.Address')
+POSTGRES_ALEXANDRIA_ADDRESS=$(aws rds describe-db-instances | jq -r '[.DBInstances[]][0].Endpoint.Address')
 
 ssh \
   -o "StrictHostKeyChecking=no" \
-  -N \
+  -M \
+  -S ssh-control-socket \
+  -fnNT \
   -L 4646:${NOMAD_SERVER_PRIVATE_IP}:4646 \
   -L 3000:${NOMAD_CLIENT_PRIVATE_IP}:3000 \
   -L 9090:${NOMAD_CLIENT_PRIVATE_IP}:9090 \
