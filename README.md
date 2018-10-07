@@ -55,6 +55,12 @@ Things are being stored in Prometheus:
 3. Prometheus is reading the exposed metrics from nomad which includes things like memory utilization for the services
 4. Prometheus monitors itself
 
+## Web Components
+
+The `s3tp-api` project contains a rails application meant to interact with the heroku provisioning service. As part of working with heroku apps are responsible for showing a dashboard to their users. This dashboard may also live in the `s3tp-api` repository but I'm not quite sure at the time of this writing.
+
+The `s3tp-web` application contains a simple rails app that shows an IFRAME to the product hunt page. `s3tp.io` seems to redirect to this page.
+
 ## README TODO
 
 Add details about doing remote profiling of the server
