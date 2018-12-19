@@ -1,7 +1,7 @@
-# About
+# About (DEPRECATED)
 
 S3TP is an SFTP Server that does pass-through to S3 when provided credentials for an
-IAM user.
+IAM user. This project was deprecated after AWS released a managed SFTP service.
 
 ## Setup
 
