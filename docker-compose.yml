@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: "go test -v"
+    command: "go run ."
     ports:
       - "22:22"
       - "8080:8080"
